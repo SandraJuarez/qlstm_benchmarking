@@ -1,0 +1,36 @@
+el shape de seq es torch.Size([64, 4, 5])
+el shape de labeel es torch.Size([64, 5])
+el shape de classic lstm_out torch.Size([64, 4, 64]
+el shape de classic lstm_out luego dee self.fc(out[:, -1, :] torch.Size([64, 5])
+
+Y AL FINALEN LA SEPTIMA (SON 7 PORQUE 500//64=7) 
+el shape de seq es torch.Size([12, 4, 5])
+el shape de labeel es torch.Size([12, 5])
+el shape de classic lstm_out torch.Size([12, 4, 64])
+
+CUANTICO -> esto daba cuando se inicializaba con (5,64,1,4) -> seq_len, hidden_dim,  target_size, n_qubits
+weight_shapes = (n_qlayers, n_qubits) = (1, 5)
+el shape de seq es torch.Size([64, 4, 5])
+el shape de labeel es torch.Size([64, 5])
+el shape de lstm_out torch.Size([64, 4, 64])
+el shape del target torch.Size([64, 1])
+
+-> (5,64,5,5) :
+weight_shapes = (n_qlayers, n_qubits) = (1, 5)
+el shape de seq es torch.Size([64, 5, 5])
+el shape de labeel es torch.Size([64, 5])
+el shape de lstm_out torch.Size([64, 5, 64])
+RuntimeError: mat1 and mat2 shapes cannot be multiplied (64x320 and 64x5)
+
+-> (4,64,5,5) :
+weight_shapes = (n_qlayers, n_qubits) = (1, 5)
+el shape de seq es torch.Size([64, 4, 5])
+el shape de labeel es torch.Size([64, 5]) 
+ NO ENTRA A QLSTM
+
+-> (4,64,5,5) :
+weight_shapes = (n_qlayers, n_qubits) = (1, 4)
+el shape de seq es torch.Size([64, 4, 5])
+el shape de labeel es torch.Size([64, 5])
+NO ENTRA A QLSTM
+
