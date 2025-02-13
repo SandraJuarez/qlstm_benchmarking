@@ -7,3 +7,5 @@ sp500/
 sp500_md/
 weights/
 mlruns/
+BTC.csv
+sp500.csv
