@@ -1,5 +1,6 @@
 import optax
-from Qlstm_RANDOM import QLSTM
+from Qlstm import QLSTM
+from LSTM import ClassicalLSTM as LSTM
 import jax
 import jax.numpy as jnp
 import mlflow
@@ -9,7 +10,7 @@ import torch
 import os
 
 jax.config.update('jax_enable_x64', True)
-def train_model(X_train,Y_train,X_test,Y_test,trainloader,testloader,original_dataset,run_name,dataset, seq_len,n_layers,n_qubits,concat_size,target_size,key):
+def train_model(X_train,Y_train,X_test,Y_test,trainloader,testloader,original_dataset,run_name,dataset, seq_len,n_layers,n_qubits,concat_size,target_size,key,model):
     experiment_name = dataset
     experiment = mlflow.get_experiment_by_name(experiment_name)
     #experiment_id = experiment.experiment_id
@@ -22,7 +23,10 @@ def train_model(X_train,Y_train,X_test,Y_test,trainloader,testloader,original_da
     input_shape = (1,) + input_shape
     print(input_shape)
     features=input_shape[0]
-    net = QLSTM(seq_len,n_layers,n_qubits,concat_size,target_size)
+    if model=='QCNN':
+        net = QLSTM(seq_len,n_layers,n_qubits,concat_size,target_size)
+    elif model=='LSTM':
+        net=LSTM(seq_len,concat_size,target_size)
     key2 = jax.random.PRNGKey(key)
     sample_input = jnp.array(X_train[:16,:,:])
     input_shape = sample_input.shape
