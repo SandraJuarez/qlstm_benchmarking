@@ -14,6 +14,7 @@ class QLSTM(nn.Module):
     n_qubits:int
     hidden_size:int
     target_size:int
+    return_all_hidden:bool
     
     def setup(self):
         self.weightsf=self.param('weightsf',nn.initializers.xavier_uniform(),(self.n_qlayers, self.n_qubits))
@@ -84,7 +85,7 @@ class QLSTM(nn.Module):
         return out
     
     @nn.compact
-    def __call__(self, x, init_states=None):
+    def __call__(self, x, init_states=None,return_all_hidden=False):
         '''
         x.shape is (batch_size, seq_length, feature_size)
         recurrent_activation -> sigmoid
@@ -92,7 +93,7 @@ class QLSTM(nn.Module):
         '''
        
         hidden_seq = []
-        batch_size=16
+        batch_size=x.shape[0]
         if init_states is None:
             h_t = jnp.zeros((batch_size, self.hidden_size))  # hidden state (output)
             c_t = jnp.zeros((batch_size, self.hidden_size)) # cell state
@@ -106,44 +107,41 @@ class QLSTM(nn.Module):
         for t in range(self.seq_lenght):
             # get features from the t-th element in seq, for all entries in the batch
             x_t = x[:, t, :] #x has shape (batch,seq_len,features)
-            
+          
             # Concatenate input and hidden state
             v_t = jnp.concatenate((h_t, x_t), axis=1)
-            #print('el shape de vt',v_t.shape)
             # match qubit dimension
             y_t = nn.Dense(self.n_qubits)(v_t) #Dense gives an output of n_qubits
-            #print('el shape de yt',y_t.shape)
             f_t=self.circuit_forget(y_t,self.weightsf)
             f_t=jnp.asarray(f_t)
             f_t = nn.sigmoid(f_t)  # forget block
-            #print('el shape de ft antes del dense',f_t.shape)
             f_t=jnp.transpose(f_t)
             f_t=nn.Dense(self.hidden_size)(f_t)
-            #print('el shape de f_t',f_t.shape)
             i_t = self.circuit_input(y_t,self.weightsi)  # input block
             i_t=jnp.asarray(i_t)
             i_t=nn.sigmoid(i_t)
             i_t=jnp.transpose(i_t)
             i_t=nn.Dense(self.hidden_size)(i_t)
-            #print('el shape de i_t',i_t.shape)
             g_t = self.circuit_update(y_t,self.weightsu) # update block
             g_t=jnp.asarray(g_t)
             g_t=jnp.tanh(g_t)
             g_t=jnp.transpose(g_t)
             g_t=nn.Dense(self.hidden_size)(g_t)
-            #print('el shape de g_t',g_t.shape)
             o_t = self.circuit_output(y_t,self.weightso)# output block
+            
             o_t=jnp.asarray(o_t)
             o_t=nn.sigmoid(o_t)
             o_t=jnp.transpose(o_t)
             o_t=nn.Dense(self.hidden_size)(o_t)
-            #print('el shape de o_t',o_t.shape)
             c_t = (f_t * c_t) + (i_t * g_t)
             h_t = o_t * nn.tanh(c_t) #it has size (batch_size, hidden)
             hidden_seq.append(jnp.expand_dims(h_t, axis=0))#we will end with a number of sequences of the size of the window of time 
                                  
         hidden_seq = jnp.concatenate(hidden_seq, axis=0) #(window, batch_size,hidden)
         hidden_seq = hidden_seq.transpose(1, 0, 2)  #(batch_size,window,hidden)
-        hidden_seq=hidden_seq[:, -1, :]
-        target=nn.Dense(self.target_size)(hidden_seq)
-        return target
+        final_hidden_seq=hidden_seq[:, -1, :]
+        target=nn.Dense(self.target_size)(final_hidden_seq)
+        if return_all_hidden:
+            return target, hidden_seq
+        else:
+            return target

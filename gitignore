@@ -1,0 +1,10 @@
+# Ignorar todo dentro de estas carpetas
+frequencies/
+euro/
+btc_md/
+mlruns/
+__pycache__/
+legendre3/
+mackey/
+sp500_md/
+

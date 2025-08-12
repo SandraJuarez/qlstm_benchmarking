@@ -7,6 +7,7 @@ import jax
 from torch.utils.data import Dataset
 import collections
 import jax.numpy as jnp
+#from statsmodels.tsa.statespace.sarimax import SARIMAX
 import jax_dataloader as jdl
 np.random.seed(0)  
 
@@ -140,6 +141,56 @@ def data(dataset,sample_len):
         Y_train = scaled_data_train[:,5,:]
         X_test = scaled_data_test[:,:5,:]  
         Y_test = scaled_data_test[:,5,:]
+    
+    elif dataset=='suma':
+        """
+        Generate data for the Adding Task.
+
+        :param num_samples:  Number of sequences to generate
+        :param seq_length:   Length of each sequence (number of time steps)
+        :param seed:         Optional random seed for reproducibility
+        :return: (X, y)
+            X shape: (num_samples, seq_length, 2)
+            y shape: (num_samples, 1)
+        """
+        seed=42
+        num_samples = 1000
+        seq_length=5
+        if seed is not None:
+            np.random.seed(seed)
+
+        # X will hold the sequences: for each time step we have (value, marker).
+        X = np.zeros((num_samples, seq_length, 2), dtype=np.float32)
+        # y will hold the sum of the two selected values (one per sequence).
+        y = np.zeros((num_samples, 1), dtype=np.float32)
+
+        for i in range(num_samples):
+            # 1) Random values in the first channel (feature 0)
+            values = np.random.rand(seq_length).astype(np.float32)
+
+            # 2) Select two random time steps to place the flags
+            idxs = np.random.choice(seq_length, size=2, replace=False)
+            idx1, idx2 = idxs[0], idxs[1]
+
+            # Mark these positions in the second channel (feature 1)
+            markers = np.zeros(seq_length, dtype=np.float32)
+            markers[idx1] = 1.0
+            markers[idx2] = 1.0
+
+            # The target is the sum of the two chosen values
+            target = values[idx1] + values[idx2]
+
+            # Construct the full sequence (value, marker)
+            X[i, :, 0] = values
+            X[i, :, 1] = markers
+            y[i, 0] = target
+            #complete data
+            data=X
+            X_train = X[:750]
+            Y_train = y[:750]
+            X_test = X[750:]
+            Y_test = y[750:]
+            features=2
         
     elif dataset=='btc': #este dataset es unidimensional
         data=np.genfromtxt('BTC.csv', delimiter=',',skip_header=1)
@@ -195,6 +246,8 @@ def data(dataset,sample_len):
         Y_train = np.expand_dims(Y_train, axis=1) 
         X_test = np.expand_dims(X_test, axis=2)  
         Y_test = np.expand_dims(Y_test, axis=1)
+
+    
         
     
         
@@ -237,6 +290,133 @@ def data(dataset,sample_len):
 
         #X_test=X_test.reshape(250,1,4)
         #Y_test=Y_test.reshape(250,1)
+    elif dataset == 'frequencies':
+        sample_len = 1000
+        noise_std = 0.05  # 0.05 for consistent noise
+
+        # Lista de frecuencias a incluir (todas con la misma amplitud)
+        freqs = [0.01, 0.05, 0.1, 0.2, 0.4]
+        amplitude = 1.0
+
+        t = np.arange(sample_len)
+        
+        # Sumar componentes sinusoidales de todas las frecuencias
+        composite_signal = np.zeros(sample_len)
+        for f in freqs:
+            composite_signal += amplitude * np.sin(2 * np.pi * f * t)
+        
+        # Agregar ruido gaussiano
+        noise = np.random.normal(loc=0.0, scale=noise_std, size=sample_len)
+        data = composite_signal + noise
+
+        # Redimensionar para consistencia
+        data = data.reshape(-1, 1)
+
+        # Escalar los datos sintéticos a [0, 1]
+        data_min = data.min()
+        data_max = data.max()
+        scaled_data_ts = (data - data_min) / (data_max - data_min)
+
+        # Construir los datos con ventanas: [t-4, t-3, t-2, t-1, t, t+1]
+        datasize = sample_len - 4 - 1  # desde t=4 hasta t=998
+        scaled_data = np.zeros((datasize, 6))
+        for t in range(4, sample_len - 1):
+            idx = t - 4
+            scaled_data[idx, :] = [
+                scaled_data_ts[t - 4, 0], scaled_data_ts[t - 3, 0], scaled_data_ts[t - 2, 0],
+                scaled_data_ts[t - 1, 0], scaled_data_ts[t, 0], scaled_data_ts[t + 1, 0]
+            ]
+
+        # División ejemplo: 600 entrenamiento, 300 prueba
+        scaled_data_train = scaled_data[:600]
+        scaled_data_test = scaled_data[600:900]
+
+        X_train = scaled_data_train[:, :5]
+        Y_train = scaled_data_train[:, 5]
+        X_test = scaled_data_test[:, :5]
+        Y_test = scaled_data_test[:, 5]
+        features = 1
+
+        # Ajustar dimensiones para LSTM
+        X_train = np.expand_dims(X_train, axis=2)  # (samples, 5, 1)
+        Y_train = np.expand_dims(Y_train, axis=1)
+        X_test = np.expand_dims(X_test, axis=2)
+        Y_test = np.expand_dims(Y_test, axis=1)
+
+    elif dataset=='seasons':
+        sample_len=1000
+        periods=[24,168]  # Two seasonalities
+        amps=[1.0,0.5]    # Different amplitudes for each seasonality
+        noise_std=0.1 
+    
+        
+        points = 1001
+        
+        # Time indices
+        t = np.arange(points)
+        
+        # Sum up multiple seasonal components
+        # e.g., if periods=[24,168], amps=[1.0,0.5], 
+        # we get daily & weekly cycles with different amplitudes.
+        signal = np.zeros(points)
+        for p in range(len(periods)):
+            per=periods[p]
+            amp=amps[p]
+            print(per)
+            print
+            signal += amp * np.sin(2 * np.pi * t / per)
+        
+        # Add Gaussian noise
+        noise = np.random.normal(loc=0.0, scale=noise_std, size=points)
+        
+        # Combine seasonal signal + noise
+        data = signal + noise
+        
+        # Reshape to (points, 1) for consistent scaling logic
+        data = data.reshape(-1, 1)
+
+        # Scale to [0,1]
+        data_min = data.min()
+        data_max = data.max()
+        scaled_data_ts = (data - data_min) / (data_max - data_min)
+
+        # Build array with 5 columns: [t-18, t-12, t-6, t, t+6] 
+        datasize = sample_len - 4  # number of valid rows
+        scaled_data = np.zeros((datasize, 6))
+
+        for i in range(4, sample_len):
+            idx = i - 4
+            scaled_data[idx, :] = [
+                scaled_data_ts[i - 4, 0],
+                scaled_data_ts[i - 3, 0],
+                scaled_data_ts[i - 2, 0],
+                scaled_data_ts[i - 1, 0],  # <-- here's the missing reference
+                scaled_data_ts[i, 0],
+                scaled_data_ts[i + 1, 0]
+            ]
+
+        # Split into train/test
+        # Example: first 500 points for train, last 250 for test (adjust as needed)
+        train_end = 500
+        test_start = 750
+
+        scaled_data_train = scaled_data[:train_end, :]
+        scaled_data_test  = scaled_data[test_start:, :]
+        features=1
+
+        X_train = scaled_data_train[:, :4]  # t-18, t-12, t-6, t
+        Y_train = scaled_data_train[:, 4]   # t+6
+        X_test  = scaled_data_test[:, :4]
+        Y_test  = scaled_data_test[:, 4]
+
+        # Reshape to match your code’s requirement
+        X_train = np.expand_dims(X_train, axis=2)  # (samples, 4, 1)
+        Y_train = np.expand_dims(Y_train, axis=1)  # (samples, 1)
+        X_test  = np.expand_dims(X_test, axis=2)   # (samples, 4, 1)
+        Y_test  = np.expand_dims(Y_test, axis=1)   # (samples, 1)
+  
+    
+        
     elif dataset=='legendre3':#este dataset es unidimensional
         np.random.seed(42)
         x_values = np.linspace(0, 100, 1000)
@@ -296,4 +476,5 @@ def data(dataset,sample_len):
     )
     #print('un sample de xtest',X_test[0,:,:])
     return X_train,Y_train,X_test,Y_test,trainloader,testloader,data,features
+    
     
