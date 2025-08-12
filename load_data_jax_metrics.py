@@ -290,32 +290,49 @@ def data(dataset,sample_len):
 
         #X_test=X_test.reshape(250,1,4)
         #Y_test=Y_test.reshape(250,1)
-    elif dataset == 'frequencies':
-        sample_len = 1000
-        noise_std = 0.05  # 0.05 for consistent noise
+    elif dataset.startswith('frequencies'):
+        seed=42
+        rng = np.random.default_rng(seed)
 
-        # Lista de frecuencias a incluir (todas con la misma amplitud)
-        freqs = [0.01, 0.05, 0.1, 0.2, 0.4]
-        amplitude = 1.0
+        # Parámetros por escenario 
+        if 'low' in dataset:
+            print('low')
+            f_low, f_high = 0.01, 0.05
+            A_low, A_high = 1.50, 0.30
+            noise_std = 0.05
+            sample_len = 1000
 
+        elif 'high' in dataset:
+            f_low, f_high = 0.01, 0.40
+            A_low, A_high = 0.30, 1.50
+            noise_std = 0.05
+            sample_len = 1000
+
+        elif 'noisy' in dataset:
+            f_low, f_high = 0.01, 0.10
+            A_low, A_high = 1.00, 0.50
+            noise_std = 0.80
+            sample_len = 1000
+
+        elif 'small' in dataset:
+            f_low, f_high = 0.02, 0.40
+            A_low, A_high = 0.50, 0.50
+            noise_std = 0.10
+            sample_len = 300 
+           
+        else:
+            raise ValueError("Dataset not recognized. Use 'frequencies_low', 'frequencies_high', 'frequencies_noisy' or 'frequencies_small'.")
         t = np.arange(sample_len)
-        
-        # Sumar componentes sinusoidales de todas las frecuencias
-        composite_signal = np.zeros(sample_len)
-        for f in freqs:
-            composite_signal += amplitude * np.sin(2 * np.pi * f * t)
-        
-        # Agregar ruido gaussiano
-        noise = np.random.normal(loc=0.0, scale=noise_std, size=sample_len)
-        data = composite_signal + noise
+        slow  = A_low  * np.sin(2 * np.pi * f_low  * t)
+        high  = A_high * np.sin(2 * np.pi * f_high * t)
+        noise = rng.normal(loc=0.0, scale=noise_std, size=sample_len)
+        data  = slow + high + noise
+        data  = data.reshape(-1, 1)
 
-        # Redimensionar para consistencia
-        data = data.reshape(-1, 1)
-
-        # Escalar los datos sintéticos a [0, 1]
-        data_min = data.min()
-        data_max = data.max()
-        scaled_data_ts = (data - data_min) / (data_max - data_min)
+        # Escalado a [0,1] (como en tu ejemplo)
+        dmin, dmax = data.min(), data.max()
+        scaled_data_ts = (data - dmin) / (dmax - dmin + 1e-12)
+        
 
         # Construir los datos con ventanas: [t-4, t-3, t-2, t-1, t, t+1]
         datasize = sample_len - 4 - 1  # desde t=4 hasta t=998
@@ -328,9 +345,12 @@ def data(dataset,sample_len):
             ]
 
         # División ejemplo: 600 entrenamiento, 300 prueba
-        scaled_data_train = scaled_data[:600]
-        scaled_data_test = scaled_data[600:900]
-
+        if sample_len>=1000:
+            scaled_data_train = scaled_data[:600]
+            scaled_data_test = scaled_data[600:900]
+        else:
+            scaled_data_train = scaled_data[:200]
+            scaled_data_test = scaled_data[200:300]
         X_train = scaled_data_train[:, :5]
         Y_train = scaled_data_train[:, 5]
         X_test = scaled_data_test[:, :5]
