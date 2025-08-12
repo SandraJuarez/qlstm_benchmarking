@@ -1,5 +1,12 @@
 # Ignorar todo dentro de estas carpetas
 frequencies/
+frequencies_low/
+frequencies_noisy/
+frequencies_small/
+sp500/
+suma/
+btc/
+sp500/
 euro/
 btc_md/
 mlruns/

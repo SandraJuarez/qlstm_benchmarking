@@ -18,7 +18,7 @@ def train_model(
     X_train, Y_train, X_test, Y_test, trainloader, testloader,
     original_dataset, run_name, dataset, seq_len, n_layers, n_qubits,
     concat_size, target_size, key, model, convergence=False,
-    plot=True, return_all_hidden=False
+    plot=False, return_all_hidden=False
 ):
     """
     Train either a QLSTM or a classical LSTM on the given data.
