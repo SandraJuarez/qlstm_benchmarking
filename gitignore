@@ -7,4 +7,5 @@ __pycache__/
 legendre3/
 mackey/
 sp500_md/
-
+BTC.csv
+sp500.csv
