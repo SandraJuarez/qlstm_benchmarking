@@ -25,7 +25,7 @@ DTYPE = jnp.bfloat16   # si tu GPU no soporta BF16, usa jnp.float16; si prefiere
 # Trainer: compila una vez
 # =========================
 class Trainer:
-    def __init__(self, net, input_shape, lr=5e-4, use_checkpoint=True):
+    def __init__(self, net, input_shape, lr=5e-4, use_checkpoint=True, warmup=True, warmup_bs=1):
         self.net = net
         self.lr = lr
         self.optimizer = optax.adam(learning_rate=lr)
@@ -59,13 +59,14 @@ class Trainer:
         # --- y aquí las JITeas asignando al atributo ---
         self.train_step = jax.jit(_train_step, donate_argnums=(0, 1))
         self.val_step   = jax.jit(_val_step)
-
-        # (opcional) warmup para compilar una vez
-        _ = self.train_step(
-            self.params0, self.opt_state0,
-            jnp.ones(input_shape, DTYPE),
-            jnp.ones((input_shape[0], 1), DTYPE)
-        )
+        if warmup:
+            tiny_shape = (min(warmup_bs, input_shape[0]), input_shape[1], input_shape[2])
+            _ = self.train_step(
+                self.params0, self.opt_state0,
+                jnp.ones(tiny_shape, DTYPE),
+                jnp.ones((tiny_shape[0], 1), DTYPE)
+            )
+        
 
     def init_params(self, key, input_shape):
         params = self.net.init(jax.random.PRNGKey(key), jnp.ones(input_shape, DTYPE))
