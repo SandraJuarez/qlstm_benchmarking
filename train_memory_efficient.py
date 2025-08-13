@@ -25,10 +25,11 @@ DTYPE = jnp.bfloat16   # si tu GPU no soporta BF16, usa jnp.float16; si prefiere
 # Trainer: compila una vez
 # =========================
 class Trainer:
-    def __init__(self, net, input_shape, lr=5e-4, use_checkpoint=True, warmup=True, warmup_bs=1):
+    def __init__(self, net, input_shape, lr=5e-4, use_checkpoint=True, warmup=True, warmup_bs=4,micro=2):
         self.net = net
         self.lr = lr
         self.optimizer = optax.adam(learning_rate=lr)
+        self.micro = micro
 
         dummy_key = jax.random.PRNGKey(0)
         self.params0 = self.net.init(dummy_key, jnp.ones(input_shape, DTYPE))
@@ -46,10 +47,34 @@ class Trainer:
 
         # --- define funciones "normales" ---
         def _train_step(params, opt_state, inputs, targets):
-            loss, grads = jax.value_and_grad(mse_loss)(params, inputs, targets)
+            micro = self.micro  # atributo del Trainer
+            if micro <= 1:
+                loss, grads = jax.value_and_grad(mse_loss)(params, inputs, targets)
+            else:
+                B = inputs.shape[0]
+                assert B % micro == 0, f"batch {B} no divisible por micro={micro}"
+                bs = B // micro
+
+                def body(p, i):
+                    x_mb = jax.lax.dynamic_slice(
+                        inputs,  (i*bs, 0, 0), (bs, inputs.shape[1], inputs.shape[2])
+                    )
+                    y_mb = jax.lax.dynamic_slice(
+                        targets, (i*bs, 0),    (bs, targets.shape[1])
+                    )
+                    l, g = jax.value_and_grad(mse_loss)(p, x_mb, y_mb)
+                    return p, (l, g)   # regresamos el mismo params sin modificar
+
+                # ⬇️ carry es params (no tuple); scan devuelve params_out y (losses, grads)
+                _, (losses, grads_stacked) = jax.lax.scan(body, params, jnp.arange(micro))
+
+                loss  = jnp.mean(losses)                          # (micro,) -> escalar
+                grads = jax.tree_map(lambda g: jnp.mean(g, 0), grads_stacked)  # promedio eje micro
+
             updates, opt_state = self.optimizer.update(grads, opt_state, params)
             params = optax.apply_updates(params, updates)
             return params, opt_state, loss
+
 
         def _val_step(params, inputs, targets):
             preds = self.apply_fn(params, inputs)
