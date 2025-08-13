@@ -5,14 +5,17 @@ from scipy.stats import pearsonr
 import jax
 import jax.numpy as jnp
 import mlflow
-import scipy.fftpack
+#import scipy.fftpack
 import time
 import numpy as np
 import torch
 import os
 import matplotlib.pyplot as plt
+import os
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"  
 
-jax.config.update('jax_enable_x64', True)
+jax.config.update('jax_enable_x64', False)
+jax.config.update("jax_default_matmul_precision", "lowest")
 
 def train_model(
     X_train, Y_train, X_test, Y_test, trainloader, testloader,
@@ -64,7 +67,7 @@ def train_model(
     # -----------------
     # 4) Define training/validation step functions (JIT-compiled)
     # -----------------
-    @jax.jit
+    @jax.jit(donate_argnums=(0,1))
     def train_step(params, opt_state, inputs, targets):
         def mse_loss(params, inputs, targets):
             predictions = net.apply(params, inputs)  # uses default return_all_hidden=False
@@ -132,7 +135,7 @@ def train_model(
                 epoch_losses_batchwise.append(loss)
 
             # Average training loss over entire training set
-            epoch_loss /= len(X_train)
+            epoch_loss = epoch_loss / len(X_train)
             loss_history.append(epoch_loss)
 
             # --------- Validation Loop ----------
@@ -148,17 +151,23 @@ def train_model(
             forecasted_epoch = jnp.concatenate(forecasted_epoch, axis=0)
             epoch_preds.append(forecasted_epoch)
 
-            val_loss /= len(X_test)
-            val_loss_history.append(val_loss)
-            previous_losses.append(val_loss)
+            val_loss   = val_loss   / len(X_test)
+
+            # Trae a host y castea a float (evita problemas con JAX Array)
+            epoch_loss_host = float(jax.device_get(epoch_loss))
+            val_loss_host   = float(jax.device_get(val_loss))
+
+            loss_history.append(epoch_loss_host)
+            val_loss_history.append(val_loss_host)
+            previous_losses.append(val_loss_host)
 
             # Print info
-            print(f"Epoch {epoch + 1}: Train Loss = {epoch_loss:.6f}, Validation Loss = {val_loss:.6f}")
+            print(f"Epoch {epoch + 1}: Train Loss = {epoch_loss_host:.6f}, Validation Loss = {val_loss_host:.6f}")
 
             # --------- Check Convergence (Variance) ----------
             if convergence and len(previous_losses) >= 20:
                 loss_variance = np.var(previous_losses[-5:])
-                print(f"Loss Variance (last 5 epochs): {loss_variance:.8e}")
+                #print(f"Loss Variance (last 5 epochs): {loss_variance:.8e}")
                 if loss_variance < variance_threshold:
                     print(f"Convergence achieved! Stopping at epoch {epoch+1}")
                     convergence_ep = epoch + 1
@@ -185,8 +194,9 @@ def train_model(
 
         end_time = time.time()
         total_time = end_time - start_time
-        print(f"\nTraining completed. Total time: {total_time:.2f} seconds")
+        #print(f"\nTraining completed. Total time: {total_time:.2f} seconds")
         sampling_rate = 1 
+        '''
         frequencies = np.fft.fftfreq(len(epoch_preds[0]), d=1/sampling_rate)
         fft_magnitudes = []
 
@@ -194,7 +204,7 @@ def train_model(
             pred_np = np.array(pred)
             fft_vals = np.abs(scipy.fftpack.fft(pred_np))
             fft_magnitudes.append(fft_vals)
-
+        '''
         # Log final metrics / time
         mlflow.log_metric('training time', total_time)
         mlflow.log_metric('loss', epoch_loss)
@@ -245,9 +255,10 @@ def train_model(
         mlflow.log_metric('Pearson_corr', pearson_corr)
         # --- Compute Spectral Bias Index (SBI) curve across epochs ---
         target_freqs = [0.01, 0.4]  # Low and High frequency
-        f_indices = [np.argmin(np.abs(frequencies - f)) for f in target_freqs]
+        #f_indices = [np.argmin(np.abs(frequencies - f)) for f in target_freqs]
 
         sbi_curve = []
+        '''
         for fft in fft_magnitudes:
             low_mag = fft[f_indices[0]]
             high_mag = fft[f_indices[1]]
@@ -264,7 +275,7 @@ def train_model(
         print(f"Final Spectral Bias Index (SBI): {sbi_curve[-1].item():.4f}")
         mlflow.log_metric('SBI_final', sbi_curve[-1].item())
 
-
+        '''
         # Optional plotting
         if plot:
             plt.plot(forecasted, label='Predicted')
@@ -273,11 +284,11 @@ def train_model(
             plt.show()
             target_freqs = [0.01, 0.05, 0.1, 0.2, 0.4]
 
-            f_indices = [np.argmin(np.abs(frequencies - f)) for f in target_freqs]
+            #f_indices = [np.argmin(np.abs(frequencies - f)) for f in target_freqs]
 
-            for i, freq in zip(f_indices, target_freqs):
-                freq_component = [fft[i] for fft in fft_magnitudes]
-                plt.plot(freq_component, label=f'{freq} Hz')
+            #for i, freq in zip(f_indices, target_freqs):
+                #freq_component = [fft[i] for fft in fft_magnitudes]
+                #plt.plot(freq_component, label=f'{freq} Hz')
 
             plt.xlabel('Epoch')
             plt.ylabel('Magnitude in prediction')

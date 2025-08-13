@@ -1,7 +1,15 @@
-from train import train_model
+
 import load_data_jax_metrics
-import training_jax_lossvariance as train
+from train_memory_efficient import train_model, Trainer
+from Qlstm import QLSTM
+from LSTM import ClassicalLSTM as LSTM
+
 import numpy as np
+import time
+import gc, jax
+
+# 2) Limpia cachés internas de ejecutables (no siempre reduce VRAM, pero ayuda)
+jax.clear_caches()
 
 
 
@@ -26,27 +34,65 @@ convergence=False
 
 
 
-times=np.zeros((int(len(point_list)),int(len(key_list))))
-for p in range(len(point_list)):  
-    points=point_list[p] 
-    for k in range(len(key_list)):
-        key=key_list[k]
-        for d in range(len(dataset_list)):
-            dataset=dataset_list[d]
-            seq_len=sample_size_list[d]
-            
-            X_train,Y_train,X_test,Y_test,trainloader,testloader,data,features=load_data_jax_metrics.data(dataset,points)
-            print(features)
-            target_size=1
-            for q in range(len(qubits_list)):
-                n_qubits=qubits_list[q]
-                if architecture=='super_parallel':
-                    n_layers=n_qubits//kernel_size
-                elif architecture=='parallel' or architecture=='no_reupload':
-                    n_layers=4
-                for h in range(len(hidden_list)):
-                    concat_size=hidden_list[h]
-                    #run_Name=dataset+ansatz+str(out_channels)+str(n_layers)+str(architecture)+str(key)
-                    run_name=dataset+str(concat_size)+str(n_qubits)+str(key)+str('small8Q25')
-                    train.train_model(X_train,Y_train,X_test,Y_test,trainloader,testloader,data,run_name,dataset, seq_len,n_layers,n_qubits,concat_size,target_size,key,model,convergence)
-                        
+# Opcional: caché persistente de compilación entre ejecuciones
+# from jax.experimental.compilation_cache import compilation_cache
+# compilation_cache.initialize_cache(os.path.expanduser("~/.jax_compilation_cache"))
+
+times = {}  # paso a dict para soportar todas las combinaciones
+
+for d, dataset in enumerate(dataset_list):
+    seq_len = sample_size_list[d]
+
+    for p, points in enumerate(point_list):
+        # Carga de datos depende de dataset y points → cambia shapes/longitudes
+        X_train, Y_train, X_test, Y_test, trainloader, testloader, data, features = (
+            load_data_jax_metrics.data(dataset, points)
+        )
+        print("features:", features)
+        target_size = 1
+
+        for q, n_qubits in enumerate(qubits_list):
+            if architecture == 'super_parallel':
+                n_layers = n_qubits // kernel_size
+            elif architecture in ('parallel', 'no_reupload'):
+                n_layers = 4
+            else:
+                raise ValueError("architecture inválida")
+
+            for h, concat_size in enumerate(hidden_list):
+                # === Construye el modelo y el Trainer UNA sola vez por config ===
+                if model == "QLSTM":
+                    net = QLSTM(seq_len, n_layers, n_qubits, concat_size, target_size, return_all_hidden=False)
+                elif model == "LSTM":
+                    net = LSTM(seq_len, features, concat_size, target_size)
+                else:
+                    raise ValueError("Unknown model")
+
+                # Usa un batch fijo para inicializar/compilar (coincidir con tus loaders)
+                batch_init = 16
+                input_shape = (batch_init, seq_len, features)
+                trainer = Trainer(net, input_shape, lr=5e-4, use_checkpoint=True)  # <-- compila 1 vez
+
+                # Estructura para tiempos por seed
+                key_times = []
+
+                # === Ahora sí: SEEDS ADENTRO → reusa compilación ===
+                for k, key in enumerate(key_list):
+                    run_name = f"{dataset}{concat_size}{n_qubits}{key}small8Q25"
+
+                    t0 = time.time()
+                    train_model(
+                        X_train, Y_train, X_test, Y_test,
+                        trainloader, testloader, data,
+                        run_name, dataset, seq_len, n_layers, n_qubits,
+                        concat_size, target_size, key, model,
+                        convergence=False, plot=False, return_all_hidden=False,
+                        trainer=trainer       # <--- reusa train_step/val_step compilados
+                    )
+                    key_times.append(time.time() - t0)
+
+                # Guarda tiempos por configuración
+                cfg_key = (dataset, points, n_qubits, n_layers, concat_size)
+                times[cfg_key] = key_times
+
+# (opcional) convertir times a algo tabular si quieres guardar CSV
