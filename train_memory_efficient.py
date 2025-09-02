@@ -15,7 +15,11 @@ from Qlstm import QLSTM
 from LSTM import ClassicalLSTM as LSTM
 import mlflow
 import time, os, torch
+import pandas as pd
+import matplotlib.pyplot as plt
 from scipy.stats import pearsonr
+
+from memory import MemoryMonitor
 
 # Elige tu dtype de trabajo:
 DTYPE = jnp.bfloat16   # si tu GPU no soporta BF16, usa jnp.float16; si prefieres estabilidad usa jnp.float32
@@ -30,7 +34,7 @@ class Trainer:
         self.lr = lr
         self.optimizer = optax.adam(learning_rate=lr)
         self.micro = micro
-
+   
         dummy_key = jax.random.PRNGKey(0)
         self.params0 = self.net.init(dummy_key, jnp.ones(input_shape, DTYPE))
         self.params0 = jax.tree_map(lambda p: p.astype(DTYPE) if hasattr(p, "dtype") else p, self.params0)
@@ -114,7 +118,7 @@ def train_model(
     X_train, Y_train, X_test, Y_test, trainloader, testloader,
     original_dataset, run_name, dataset, seq_len, n_layers, n_qubits,
     concat_size, target_size, key, model, convergence=False,
-    plot=False, return_all_hidden=False, trainer=None
+    plot=False, return_all_hidden=False, trainer=None, monitor_memory=False
 ):
     """
     Espera un 'trainer' creado afuera con la misma config y shapes de entrada.
@@ -148,6 +152,12 @@ def train_model(
     Y_test  = jnp.asarray(Y_test,  dtype=DTYPE)
 
     # ----------------- 2) Init params/opt por SEED -----------------
+    if monitor_memory:
+        gpu_index = 0
+        mon = MemoryMonitor(gpu_index=gpu_index, interval_sec=0.2)
+        mon.start()
+        mon.mark("init_after_trainer") 
+
     params, opt_state = trainer.init_params(key, input_shape)
 
     epochs = 200 if convergence else 25
@@ -165,13 +175,16 @@ def train_model(
         mlflow.log_param('learning rate', trainer.lr)
         mlflow.log_param('init', 'xavier')
         mlflow.log_param('dtype', str(DTYPE))
-
+        
         start_time = time.time()
 
         # ----------------- 3) Loop de épocas -----------------
         for epoch in range(epochs):
             print(f"\nStarting epoch {epoch + 1}")
             epoch_loss = 0.0
+            if monitor_memory:
+                mon.mark(f"epoch_{epoch+1}_start")
+                
 
             # ---- Train ----
             for data in trainloader:
@@ -259,5 +272,53 @@ def train_model(
         pearson_corr, _ = pearsonr(forecasted.flatten(), targ.flatten())
         print(f"Pearson Correlation (Test): {pearson_corr:.4f}")
         mlflow.log_metric('Pearson_corr', float(pearson_corr))
+        if monitor_memory:
+            mon.stop()
+            peaks = mon.segment_peaks()
+            
+            peaks_rows = []
+            for seg, d in peaks.items():
+                peaks_rows.append({
+                    "segment": seg,
+                    "gpu_peak_mib": d["gpu_peak_mib"],
+                    "cpu_peak_mib": d["cpu_peak_mib"],
+                    "t_start": d["t_start"],
+                    "t_end": d["t_end"]
+                })
+            peaks_df = pd.DataFrame(peaks_rows).sort_values("segment")
+            out_peaks_csv = os.path.join(folder_name, f"peaks_{run_name}.csv")
+            peaks_df.to_csv(out_peaks_csv, index=False)
+
+            # --------- Plot 1: pico por época (GPU) ---------
+            # filtra segmentos tipo 'epoch_X_start'
+            ep_rows = peaks_df[peaks_df["segment"].str.startswith("epoch_")].copy()
+            if not ep_rows.empty and ep_rows["gpu_peak_mib"].notna().any():
+                ep_rows["epoch"] = ep_rows["segment"].str.extract(r"epoch_(\d+)_start").astype(int)
+                ep_rows = ep_rows.sort_values("epoch")
+                plt.figure()
+                plt.plot(ep_rows["epoch"], ep_rows["gpu_peak_mib"], marker="o")
+                plt.xlabel("Época")
+                plt.ylabel("Pico GPU (MiB)")
+                plt.title(f"Peak memoria GPU por época – {run_name}")
+                plt.tight_layout()
+                plt.savefig(os.path.join(folder_name, f"mem_peak_per_epoch_{run_name}.png"), dpi=180)
+                plt.close()
+
+            # --------- Plot 2: barra de picos por segmento clave ---------
+            # útil para comparar 'init', 'after_warmup_compile' y último 'epoch'
+            bar_df = peaks_df[peaks_df["segment"].isin(
+                ["init_after_trainer", "after_warmup_compile"]
+            )].copy()
+            if not ep_rows.empty:
+                bar_df = pd.concat([bar_df, ep_rows.tail(1).assign(segment="last_epoch")])
+            if not bar_df.empty:
+                plt.figure()
+                plt.bar(bar_df["segment"], bar_df["gpu_peak_mib"])
+                plt.ylabel("Pico GPU (MiB)")
+                plt.title(f"Picos GPU por fase – {run_name}")
+                plt.tight_layout()
+                plt.savefig(os.path.join(folder_name, f"mem_peaks_phases_{run_name}.png"), dpi=180)
+                plt.close()
+            
 
     return params, hidden_states_per_epoch if return_all_hidden else None
