@@ -29,7 +29,7 @@ DTYPE = jnp.bfloat16   # si tu GPU no soporta BF16, usa jnp.float16; si prefiere
 # Trainer: compila una vez
 # =========================
 class Trainer:
-    def __init__(self, net, input_shape, lr=5e-4, use_checkpoint=True, warmup=True, warmup_bs=4,micro=2):
+    def __init__(self, net, input_shape, lr=5e-4, use_checkpoint=True, warmup=True, warmup_bs=4,micro=2,micro_optional=False):
         self.net = net
         self.lr = lr
         self.optimizer = optax.adam(learning_rate=lr)
@@ -51,13 +51,17 @@ class Trainer:
 
         # --- define funciones "normales" ---
         def _train_step(params, opt_state, inputs, targets):
-            micro = self.micro  # atributo del Trainer
-            if micro <= 1:
-                loss, grads = jax.value_and_grad(mse_loss)(params, inputs, targets)
+            if micro_optional:
+                micro = self.micro  # atributo del Trainer
+                if micro <= 1:
+                    loss, grads = jax.value_and_grad(mse_loss)(params, inputs, targets)
+                else:
+                    B = inputs.shape[0]
+                    assert B % micro == 0, f"batch {B} no divisible por micro={micro}"
+                    bs = B // micro
             else:
-                B = inputs.shape[0]
-                assert B % micro == 0, f"batch {B} no divisible por micro={micro}"
-                bs = B // micro
+                bs=inputs.shape[0]
+                micro=bs
 
                 def body(p, i):
                     x_mb = jax.lax.dynamic_slice(
@@ -117,8 +121,8 @@ class Trainer:
 def train_model(
     X_train, Y_train, X_test, Y_test, trainloader, testloader,
     original_dataset, run_name, dataset, seq_len, n_layers, n_qubits,
-    concat_size, target_size, key, model, convergence=False,
-    plot=False, return_all_hidden=False, trainer=None, monitor_memory=False
+    concat_size, target_size, key, model,initializer, convergence=False,
+    plot=False, return_all_hidden=False, trainer=None, monitor_memory=False,inference=True,micro_optional=True
 ):
     """
     Espera un 'trainer' creado afuera con la misma config y shapes de entrada.
@@ -132,18 +136,20 @@ def train_model(
     # Input shape para init (asegúrate que coincide con batches reales)
     batch_size_for_init = 16
     sample_input = jnp.asarray(X_train[:batch_size_for_init, :, :], dtype=DTYPE)
+
     input_shape = sample_input.shape
+    
     features = input_shape[2]
 
     # Crea net si trainer == None (modo retrocompatible, compilará una vez)
     if trainer is None:
         if model == 'QLSTM':
-            net = QLSTM(seq_len, n_layers, n_qubits, concat_size, target_size, return_all_hidden=False)
+            net = QLSTM(seq_len, n_layers, n_qubits, concat_size, target_size, initializer, return_all_hidden=False)
         elif model == 'LSTM':
             net = LSTM(seq_len, features, concat_size, target_size)
         else:
             raise ValueError("Unknown model type. Choose 'QLSTM' or 'LSTM'.")
-        trainer = Trainer(net, input_shape, lr=5e-4, use_checkpoint=True)
+        trainer = Trainer(net, input_shape, lr=5e-4, use_checkpoint=True,micro_optional=micro_optional)
 
     # Cast datasets a DTYPE (si tus loaders devuelven ya jnp/DTYPE, esto no hace falta)
     X_train = jnp.asarray(X_train, dtype=DTYPE)
@@ -176,10 +182,12 @@ def train_model(
         mlflow.log_param('init', 'xavier')
         mlflow.log_param('dtype', str(DTYPE))
         
-        start_time = time.time()
+        
 
         # ----------------- 3) Loop de épocas -----------------
         for epoch in range(epochs):
+            if epoch != 0:
+                start_time = time.time()
             print(f"\nStarting epoch {epoch + 1}")
             epoch_loss = 0.0
             if monitor_memory:
@@ -249,29 +257,30 @@ def train_model(
         torch.save(np.array(val_loss_history), f'{folder_name}/LossV_{run_name}.pt')
 
         # ----------------- 5) Inference & métricas -----------------
-        forecasted, targ = [], []
-        for data in testloader:
-            inputs, targets = data[0].astype(DTYPE), data[1].astype(DTYPE)
-            p = trainer.net.apply(params, inputs)
-            forecasted.append(np.array(p))
-            targ.append(np.array(targets))
+        if inference:
+            forecasted, targ = [], []
+            for data in testloader:
+                inputs, targets = data[0].astype(DTYPE), data[1].astype(DTYPE)
+                p = trainer.net.apply(params, inputs)
+                forecasted.append(np.array(p))
+                targ.append(np.array(targets))
 
-        forecasted = np.concatenate(forecasted, axis=0)
-        targ = np.concatenate(targ, axis=0)
+            forecasted = np.concatenate(forecasted, axis=0)
+            targ = np.concatenate(targ, axis=0)
 
-        resta_l = forecasted - targ
-        n_points_test = len(Y_test)
-        RMSE = np.sqrt(np.sum(np.square(resta_l)) / n_points_test)
-        MAE = (np.sum(np.abs(resta_l)) / n_points_test)
+            resta_l = forecasted - targ
+            n_points_test = len(Y_test)
+            RMSE = np.sqrt(np.sum(np.square(resta_l)) / n_points_test)
+            MAE = (np.sum(np.abs(resta_l)) / n_points_test)
 
-        print('RMSE:', RMSE)
-        print("MAE:", MAE)
-        mlflow.log_metric('RMSE_TEST', float(RMSE))
-        mlflow.log_metric('MAE_TEST', float(MAE))
+            print('RMSE:', RMSE)
+            print("MAE:", MAE)
+            mlflow.log_metric('RMSE_TEST', float(RMSE))
+            mlflow.log_metric('MAE_TEST', float(MAE))
 
-        pearson_corr, _ = pearsonr(forecasted.flatten(), targ.flatten())
-        print(f"Pearson Correlation (Test): {pearson_corr:.4f}")
-        mlflow.log_metric('Pearson_corr', float(pearson_corr))
+            pearson_corr, _ = pearsonr(forecasted.flatten(), targ.flatten())
+            print(f"Pearson Correlation (Test): {pearson_corr:.4f}")
+            mlflow.log_metric('Pearson_corr', float(pearson_corr))
         if monitor_memory:
             mon.stop()
             peaks = mon.segment_peaks()
@@ -321,4 +330,7 @@ def train_model(
                 plt.close()
             
 
-    return params, hidden_states_per_epoch if return_all_hidden else None
+    if return_all_hidden:
+        return total_time, params, hidden_states_per_epoch
+    else:
+        return total_time, params
