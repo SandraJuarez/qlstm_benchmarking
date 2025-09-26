@@ -14,18 +14,23 @@ class QLSTM(nn.Module):
     n_qubits:int
     hidden_size:int
     target_size:int
-    return_all_hidden:bool
+    initializer: str = 'xavier_uniform'  # 'xavier_uniform' or 'normal'
+    return_all_hidden = 'False'
+    
     
     def setup(self):
-        self.weightsf=self.param('weightsf',nn.initializers.xavier_uniform(),(self.n_qlayers, self.n_qubits))
-        self.weightsi=self.param('weightsi',nn.initializers.xavier_uniform(),(self.n_qlayers, self.n_qubits))
-        self.weightsu=self.param('weightsu',nn.initializers.xavier_uniform(),(self.n_qlayers, self.n_qubits))
+        if self.initializer == 'xavier_uniform':
+            self.weightsf=self.param('weightsf',nn.initializers.xavier_uniform(),(self.n_qlayers, self.n_qubits))
+            self.weightsi=self.param('weightsi',nn.initializers.xavier_uniform(),(self.n_qlayers, self.n_qubits))
+            self.weightsu=self.param('weightsu',nn.initializers.xavier_uniform(),(self.n_qlayers, self.n_qubits))
+            
+            self.weightso=self.param('weightso',nn.initializers.xavier_uniform(),(self.n_qlayers, self.n_qubits))
+        elif self.initializer == 'normal':
+            self.weightsf=self.param('weightsf',nn.initializers.normal(),(self.n_qlayers, self.n_qubits))
+            self.weightsi=self.param('weightsi',nn.initializers.normal(),(self.n_qlayers, self.n_qubits))
+            self.weightsu=self.param('weightsu',nn.initializers.normal(),(self.n_qlayers, self.n_qubits))
+            self.weightso=self.param('weightso',nn.initializers.normal(),(self.n_qlayers, self.n_qubits))
         
-        self.weightso=self.param('weightso',nn.initializers.xavier_uniform(),(self.n_qlayers, self.n_qubits))
-        #self.weightsf=self.param('weightsf',nn.initializers.normal(),(self.n_qlayers, self.n_qubits))
-        #self.weightsi=self.param('weightsi',nn.initializers.normal(),(self.n_qlayers, self.n_qubits))
-        #self.weightsu=self.param('weightsu',nn.initializers.normal(),(self.n_qlayers, self.n_qubits))
-        #self.weightso=self.param('weightso',nn.initializers.normal(),(self.n_qlayers, self.n_qubits))
     def circuit_forget(self,inputs,weights):
         device = qml.device('default.qubit')
         wires_forget = [f"wire_forget_{i}" for i in range(self.n_qubits)]
