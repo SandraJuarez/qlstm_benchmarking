@@ -7,6 +7,7 @@ import time
 from Qlstm import QLSTM
 from LSTM import ClassicalLSTM as LSTM
 # Definimos los experimentos de alto costo a ejecutar
+'''
 experiments_to_run = [
     # Combinaciones para hidden=16 y ansatz=random
     {'hidden': 32, 'qubits': 16, 'ansatz': 'random', 'initialization': 'normal'},
@@ -17,7 +18,15 @@ experiments_to_run = [
     # Esta compensa el cambio que propones para cubrir el caso de ansatz='basic'
     {'hidden': 16, 'qubits': 18, 'ansatz': 'basic', 'initialization': 'xavier'},
 ]
-
+'''
+experiments_to_run = [
+    # Combinaciones para hidden=16 y ansatz=random
+    {'hidden': 16, 'qubits': 12, 'ansatz': 'basic', 'initialization': 'xavier'},
+    {'hidden': 16, 'qubits': 14, 'ansatz': 'basic', 'initialization': 'xavier'},
+    {'hidden': 16, 'qubits': 16, 'ansatz': 'basic', 'initialization': 'xavier'},
+    {'hidden': 16, 'qubits': 18, 'ansatz': 'basic', 'initialization': 'xavier'},
+    {'hidden': 16, 'qubits': 20, 'ansatz': 'basic', 'initialization': 'xavier'}
+]
 # Parámetros fijos
 dataset = 'sp500'
 seq_len = 5
@@ -29,7 +38,7 @@ points = 1518  # Número de puntos a cargar
 architecture = 'super_parallel'  # Opciones: no_reupload, parallel, super_parallel
 
 # Semillas para la reproducibilidad
-key_list = [0,1, 2, 3, 4]
+key_list = [0]
 
 # Bucle principal para ejecutar cada experimento del MLCA
 times={}

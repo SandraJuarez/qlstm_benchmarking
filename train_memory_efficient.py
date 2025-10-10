@@ -122,7 +122,7 @@ def train_model(
     X_train, Y_train, X_test, Y_test, trainloader, testloader,
     original_dataset, run_name, dataset, seq_len, n_layers, n_qubits,
     concat_size, target_size, key, model,initializer, convergence=False,
-    plot=False, return_all_hidden=False, trainer=None, monitor_memory=False,inference=True,micro_optional=True
+    plot=False, return_all_hidden=False, trainer=None, monitor_memory=True,inference=True,micro_optional=True
 ):
     """
     Espera un 'trainer' creado afuera con la misma config y shapes de entrada.
@@ -144,7 +144,7 @@ def train_model(
     # Crea net si trainer == None (modo retrocompatible, compilará una vez)
     if trainer is None:
         if model == 'QLSTM':
-            net = QLSTM(seq_len, n_layers, n_qubits, concat_size, target_size, initializer, return_all_hidden=False)
+            net = QLSTM(seq_len, n_layers, n_qubits, concat_size, target_size, initializer)
         elif model == 'LSTM':
             net = LSTM(seq_len, features, concat_size, target_size)
         else:
